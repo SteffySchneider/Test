@@ -20,10 +20,12 @@ jobs:
       - name: Find new or modified scripts
         id: find_scripts
         run: | 
-         git diff --name-only HEAD^ HEAD | grep '\.sh$' > scripts-to-check.txt
-         if [ ! -s scripts-to-check.txt ]; then
-           echo "No new or modified scripts to check"
-           exit 0
+          if git rev-parse --verify HEAD >/dev/null 2>&1; then
+            git diff --name-only HEAD^ HEAD | grep '\.sh$' > scripts-to-check.txt
+          else
+            echo "No new or modified scripts to check"
+            exit 0
+          fi
 
       - name: Run ShellCheck 
         if: steps.find_scriptss.outputs.scripts-to-check.txt != ''
