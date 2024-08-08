@@ -20,14 +20,22 @@ jobs:
     - name: Find new or modified scripts
       id: find_scripts
       run: |
-        if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-          git diff --name-only HEAD^ HEAD | grep '\.sh$' > scripts-to-check.txt
+        # Determine if we're in a pull request or a regular push
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # Get the list of files changed in the pull request
+          git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep '\.sh$' > scripts-to-check.txt
         else
-          git ls-files --modified --others --exclude-standard | grep '\.sh$' > scripts-to-check.txt
+          # Get the list of files changed in the push
+          git diff --name-only HEAD^ HEAD | grep '\.sh$' > scripts-to-check.txt
+        fi
+
+        # Check if any scripts were found
+        if [ ! -s scripts-to-check.txt ]; then
+          echo "No shell scripts to check."
+          exit 0
         fi
 
     - name: Run ShellCheck
-      if: steps.find_scripts.outputs.scripts-to-check.txt != ''
       run: |
         while IFS= read -r script; do
           echo "Checking $script"
@@ -40,3 +48,4 @@ jobs:
         while IFS= read -r script; do
           shellcheck "$script" || true
         done < scripts-to-check.txt
+
