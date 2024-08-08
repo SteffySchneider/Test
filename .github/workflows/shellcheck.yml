@@ -18,12 +18,12 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Find new or modified scripts
+      id: find_scripts
       run: |
-        if git rev-parse --verify HEAD >/dev/null 2>&1; then
-        git diff --name-only HEAD^ HEAD | grep '\.sh$' > scripts-to-check.txt
+        if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+          git diff --name-only HEAD^ HEAD | grep '\.sh$' > scripts-to-check.txt
         else
-        echo "No commits yet on this branch."
-        exit 0
+          git ls-files --modified --others --exclude-standard | grep '\.sh$' > scripts-to-check.txt
         fi
 
     - name: Run ShellCheck
