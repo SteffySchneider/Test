@@ -1,0 +1,41 @@
+name: ShellCheck
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+  shellcheck:
+    name: Run ShellCheck
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Find new or modified scripts
+      id: find_scripts
+      run: |
+        git diff --name-only HEAD^ HEAD | grep '\.sh$' > scripts-to-check.txt
+        if [ ! -s scripts-to-check.txt ]; then
+          echo "No new or modified scripts to check."
+          exit 0
+
+    - name: Run ShellCheck
+      if: steps.find_scripts.outputs.scripts-to-check.txt != ''
+      run: |
+        while IFS= read -r script; do
+          echo "Checking $script"
+          shellcheck "$script" || exit 1
+        done < scripts-to-check.txt
+
+    - name: Annotate ShellCheck results
+      if: failure()
+      run: |
+        while IFS= read -r script; do
+          shellcheck "$script" || true
+        done < scripts-to-check.txt
