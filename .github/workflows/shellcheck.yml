@@ -16,13 +16,20 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history so HEAD^ is available
 
     - name: Find new or modified scripts
       id: find_scripts
       run: |
         if [ "${{ github.event_name }}" = "pull_request" ]; then
-          # For pull requests, get the diff between the PR base and the current head
-          git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep '\.sh$' > scripts-to-check.txt
+          # Get the diff between the PR base and the current head
+          if git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} 2>/dev/null | grep '\.sh$' > scripts-to-check.txt; then
+            echo "Found modified scripts in pull request."
+          else
+            echo "Failed to find base SHA or no modified scripts found. Listing all scripts."
+            git ls-files | grep '\.sh$' > scripts-to-check.txt
+          fi
         else
           # For pushes, get the diff between HEAD and the previous commit
           if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
@@ -52,3 +59,4 @@ jobs:
         while IFS= read -r script; do
           shellcheck "$script" || true
         done < scripts-to-check.txt
+
