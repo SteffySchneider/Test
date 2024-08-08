@@ -20,13 +20,17 @@ jobs:
     - name: Find new or modified scripts
       id: find_scripts
       run: |
-        # Determine if we're in a pull request or a regular push
         if [ "${{ github.event_name }}" = "pull_request" ]; then
-          # Get the list of files changed in the pull request
+          # For pull requests, get the diff between the PR base and the current head
           git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep '\.sh$' > scripts-to-check.txt
         else
-          # Get the list of files changed in the push
-          git diff --name-only HEAD^ HEAD | grep '\.sh$' > scripts-to-check.txt
+          # For pushes, get the diff between HEAD and the previous commit
+          if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            git diff --name-only HEAD^ HEAD | grep '\.sh$' > scripts-to-check.txt
+          else
+            # If HEAD^ is not available (e.g., first commit), list all shell scripts
+            git ls-files | grep '\.sh$' > scripts-to-check.txt
+          fi
         fi
 
         # Check if any scripts were found
@@ -48,4 +52,3 @@ jobs:
         while IFS= read -r script; do
           shellcheck "$script" || true
         done < scripts-to-check.txt
-
