@@ -1,209 +1,82 @@
-name: Create workstation scripts
-# Workflow run name
-run-name: Create ${{ github.event.inputs.OperatingSystem }} script for ${{ inputs.defaultInstanceName }} in ${{ inputs.Location }} by @${{ github.actor }}
-# Defining the trigger to be a manual execution of the Action with inputs
+name: ShellCheck
+
 on:
-  workflow_dispatch:
-    inputs:
-      # Asset label or workstation name
-      defaultInstanceName:
-        description: 'Hostname'
-        required: true
-        default: 'QUIVO-'
-      OperatingSystem:
-        type: choice
-        description: 'PC type'
-        required: true
-        options: 
-        - Windows-Employee
-        - Windows-Inbound-Nav
-        - Ubuntu-Outbound-Packing
-      Location:
-        type: choice
-        description: 'Location'
-        required: true
-        options: 
-        - DE3
-        - AT3
-        - AT4
-        - DE1
-        - DE2
-        - DE4
-        - FR1
-        - GB1
-        - US2
-        - TEST
-        
+  pull_request:
+    branches:
+      - 'main'
+      - 'master'
+    types: [ opened, synchronize ]
 
 jobs:
+  shellcheck:
+    name: Run ShellCheck
+    runs-on: ubuntu-latest
 
-  run-action:
-    runs-on: ubuntu-latest  # Replace with the desired runner environment
-    permissions:
-      id-token: write # required to use OIDC authentication
-      contents: read # required to checkout the code from the repo
-    
-    # using the checkout to access the repo, and using the cache action to speed up the execution time
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history so all scripts are available
 
-      - name: Validate Hostname
-        run: |
-          Hostname=$(echo "${{ github.event.inputs.defaultInstanceName }}" | tr '[:lower:]' '[:upper:]')
-          Location=$(echo "${{ github.event.inputs.Location }}" | tr '[:lower:]' '[:upper:]')
-          PC_type="${{ github.event.inputs.OperatingSystem }}"
+    - name: Find all shell scripts
+      id: find_scripts
+      run: |
+        # List all .sh files in the repository
+        git ls-files | grep '\.sh$' > scripts-to-check.txt
 
-          if [[ "$PC_type" == "Windows-Employee" ]]; then
-            if [[ ! "$Hostname" =~ ^QUIVO- ]]; then
-              echo "Error: Hostname for Windows-Employee should be in the format 'QUIVO-(numbers)'."
-              exit 1
-            fi
-          elif [[ "$PC_type" == "Ubuntu-Outbound-Packing" ]]; then
-            if [[ ! "$Hostname" =~ ^${Location}-W[0-9]+$ ]]; then
-              echo "Error: Hostname for Ubuntu-Outbound-Packing in ${Location} should be in the format '${Location}-(numbers)'."
-              exit 1
-            fi
-          elif [[ "$PC_type" == "Windows-Inbound-Nav" ]]; then
-            if [[ ! "$Hostname" =~ ^${Location}-W[0-9]+-WIN$ ]]; then
-              echo "Error: Hostname for Windows-Inbound-Nav in ${Location} should be in the format '${Location}-(numbers)-WIN'."
-              exit 1
-            fi
-          else
-            echo "Error: Invalid Operating System."
-            exit 1
-          fi
+        # Check if any scripts were found
+        if [ ! -s scripts-to-check.txt ]; then
+          echo "No shell scripts to check."
+          exit 0
+        fi
 
-          echo "Hostname validation passed."
+#====================================================================================================#
+#                                           shellcheck                                               #  
+#====================================================================================================#
 
-      - uses: actions/checkout@v3
-      - uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: qrencode
-          version: 1.0
-      
-      # some tuning commands to speed up the action
-      - name: Disable initramfs update
-        run: sudo sed -i 's/yes/no/g' /etc/initramfs-tools/update-initramfs.conf
-      - name: Disable man-db update
-        run: sudo rm -f /var/lib/man-db/auto-update     
-      
-      # Step 1 Configuring AWS Credentials i.e IAM that will use CLI commands
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: arn:aws:iam::482881817652:role/GithubActionsOIDC-Role-1V247TYJR2Q9V
-          role-duration-seconds: 900 # the ttl of the session, in seconds.
-          aws-region: eu-west-1
-          
-      # Step 2: setting up environment variables that will be used in this job and the hybrid activation script
-      - name: Set up environment
-        run: |
-          # this variable is the Asset label
-          echo "defaultInstanceName=${{ github.event.inputs.defaultInstanceName }}" >> $GITHUB_ENV
-          # this variable is operating system
-          echo "choice=${{ github.event.inputs.OperatingSystem }}" >> $GITHUB_ENV
-          echo "WhLocation=${{ github.event.inputs.Location }}" >> $GITHUB_ENV
-          # this variable is the workstation location
-          LOCA=$(echo "${{ github.event.inputs.Location }}" | tr '[:upper:]' '[:lower:]')
-          # based on the location determine the work stage and the used apt repo from 1password 
-          if [ "$LOCA" = "test" ]; then
-            echo "WORK_STAGE=test" >> $GITHUB_ENV
-            echo "APT_ID_key=appWarehouseWorkstationAptRepoTest" >> $GITHUB_ENV
-          else
-            echo "WORK_STAGE=prod" >> $GITHUB_ENV
-            echo "APT_ID_key=appWarehouseWorkstationAptRepo" >> $GITHUB_ENV
-          fi  
-          
-      # Step 3: Configuration to use the 1password service account
-      - name: Configure 1Password Service Account
-        uses: 1password/load-secrets-action/configure@v1
-        with:
-          service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-      
-      # Step 4: connecting to 1password and getting the specified values from the vaults and store them as variables
-      - name: Load AWS IAM credentials from 1password
-        if: ${{ github.event.inputs.OperatingSystem == 'Ubuntu-Outbound-Packing' }}
-        uses: 1password/load-secrets-action@v1
-        with:
-          # Export loaded secrets as environment variables
-          export-env: true
-        # the URL is defined as "op://<vault>/<item>/<section>/<field>"
-        env:
-          APT_ACCESS_KEY_ID: "op://AWS IAM Workstation App/${{ env.APT_ID_key }}/OTHER FIELDS/Access Key ID"
-          APT_SECRET_ACCESS_KEY: "op://AWS IAM Workstation App/${{ env.APT_ID_key }}/OTHER FIELDS/Secret Access Key"
-          ACCESS_KEY_ID: "op://AWS IAM Workstation App/appWarehouseWorkstationSettings${{ github.event.inputs.Location }}/OTHER FIELDS/Access Key ID"
-          SECRET_ACCESS_KEY: "op://AWS IAM Workstation App/appWarehouseWorkstationSettings${{ github.event.inputs.Location }}/OTHER FIELDS/Secret Access Key"
-          ENVMENT: "op://AWS IAM Workstation App/appWarehouseWorkstationSettings${{ github.event.inputs.Location }}/OTHER FIELDS/Environment"
-    
+    - name: Run ShellCheck
+      run: |
+        while IFS= read -r script; do
+          echo "Checking $script"
+          shellcheck "$script" || exit 1
+        done < scripts-to-check.txt
 
-      # Step 5: based on the choices, we run the hybrid activation that will generate the config file
-      - name: Run script
-        run: sh ./GithubAction_Hybrid_activation.sh
-      
-      # Step 6: exporting the Windows script if os is set to windows
-      - name: Export powershell script
-        if: ${{ github.event.inputs.OperatingSystem != 'Ubuntu-Outbound-Packing' }}
-        run: |
-          # Define the filename and content for the .bat file
-          bat_filename="run ${{ github.event.inputs.defaultInstanceName }} script.bat"
-          bat_content="powershell.exe -ExecutionPolicy Bypass -File \"%~dp0/${{ github.event.inputs.defaultInstanceName }}.ps1\""
-          # Create the .bat file
-          echo "${bat_content}" > "${bat_filename}"
+    - name: Annotate ShellCheck results
+      id: shellcheck_test
+      if: success() || failure()
+      run: |
+        output_file="${{ github.workspace }}/shellcheck_results.md"
+        : > $output_file  # Create the file or clear it if it already exists
+        while IFS= read -r script; do
+          echo "Checking $script" >> $output_file
+          shellcheck "$script" >> $output_file || true
+        done < scripts-to-check.txt
 
-          # Create a ZIP file containing both files
-          zip_filename="${{ github.event.inputs.defaultInstanceName }}_scripts.zip"
-          echo "zip_filename: ${zip_filename}"
-          zip "${zip_filename}" "${bat_filename}" "${{ github.event.inputs.defaultInstanceName }}.ps1"
+    - name: Create ShellCheck report
+      if: failure()
+      run: |
+        output_file="${{ github.workspace }}/shellcheck_report.md"
+        {
+          echo '<details><summary>❌ ShellCheck failed checks report</summary>'
+          echo ''
+          echo '```'
+          cat "${{ github.workspace }}/shellcheck_results.md"
+          echo '```'
+          echo ''
+          echo '</details>'
+        } > $output_file
+        cat $output_file
 
-          aws s3 cp ${{ github.workspace }}/${zip_filename} s3://quivo-workstation-urlshortner.com/short/
-          echo "1" | aws s3 cp - s3://quivo-workstation-urlshortner.com/short/${{ github.event.inputs.defaultInstanceName }} --content-type "text/plain"  --website-redirect "https://s3.eu-west-1.amazonaws.com/quivo-workstation-urlshortner.com/short/${zip_filename}"  
-          echo "https://d3nhwfsac3huwo.cloudfront.net/${{ github.event.inputs.defaultInstanceName }} " | qrencode -o qr_${{ github.event.inputs.defaultInstanceName }}.png
-          aws s3 cp ${{ github.workspace }}/qr_${{ github.event.inputs.defaultInstanceName }}.png s3://quivo-workstation-urlshortner.com/short/
-          current_time=$(date)
-          echo "1" | aws s3 cp - s3://quivo-workstation-urlshortner.com/short/qr_${{ github.event.inputs.defaultInstanceName }} --content-type "text/plain"  --website-redirect "https://s3.eu-west-1.amazonaws.com/quivo-workstation-urlshortner.com/short/qr_${{ github.event.inputs.defaultInstanceName }}.png" 
-          aws sns publish --topic-arn "arn:aws:sns:eu-west-1:482881817652:quivo-workstation-scripts-qrcodes" --message "${{ github.event.inputs.defaultInstanceName }} Qr_code link : https://d3nhwfsac3huwo.cloudfront.net/qr_${{ github.event.inputs.defaultInstanceName }} or Link: https://s3.eu-west-1.amazonaws.com/quivo-workstation-urlshortner.com/short/${zip_filename}, this link and qr code are valid for 3h, Created on $current_time"
-
-      
-      # Step 7: this step is used to name the config file in lowercases, eg: config_at1w4
-      - name: Convert variable to lowercase
-        id: lowercase
-        run: |
-          echo "LOWER_CASE_VARIABLE=$(echo "${{ github.event.inputs.defaultInstanceName }}" | tr '[:upper:]' '[:lower:]'| tr -d '-')" >> $GITHUB_ENV
-          
-      - name: Zip repository
-        if: ${{ github.event.inputs.OperatingSystem == 'Ubuntu-Outbound-Packing' }}
-        run: |
-            zip -r config_${{ env.LOWER_CASE_VARIABLE }}.zip . -x "home/*" -x ".github/*" -x ".git/*" 
-            zip -ur config_${{ env.LOWER_CASE_VARIABLE }}.zip ${{ github.workspace }}/config_${{ env.LOWER_CASE_VARIABLE }}.sh
-            zip -d  config_${{ env.LOWER_CASE_VARIABLE }}.zip home/**
-            zip --delete config_${{ env.LOWER_CASE_VARIABLE }}.zip GithubAction_Hybrid_activation.sh config_at1w10.sh
-          
-          
-       #Step 9: Uploading to S3
-      - name: upload to S3
-        if: ${{ github.event.inputs.OperatingSystem == 'Ubuntu-Outbound-Packing' }}
-        run: aws s3 cp ${{ github.workspace }}/config_${{ env.LOWER_CASE_VARIABLE }}.zip s3://quivo-workstation-urlshortner.com/short/
-
-     
-     #Step 10: UrlShortner
-      - name: UrlShortner
-        if: ${{ github.event.inputs.OperatingSystem == 'Ubuntu-Outbound-Packing' }}
-        run: | 
-          # pre_url=$(aws s3 presign s3://quivo-workstation-scripts/config_${{ env.LOWER_CASE_VARIABLE }}.zip --expires-in 14400)
-          echo "1" | aws s3 cp - s3://quivo-workstation-urlshortner.com/short/config_${{ env.LOWER_CASE_VARIABLE }} --content-type "text/plain"  --website-redirect "https://s3.eu-west-1.amazonaws.com/quivo-workstation-urlshortner.com/short/config_${{ env.LOWER_CASE_VARIABLE }}.zip"        
-        
-      #Step 11: getting url from S3
-      - name: QR code
-        if: ${{ github.event.inputs.OperatingSystem == 'Ubuntu-Outbound-Packing' }}
-        run: |
-          echo "https://d3nhwfsac3huwo.cloudfront.net/config_${{ env.LOWER_CASE_VARIABLE }} " | qrencode -o qr_${{ env.LOWER_CASE_VARIABLE }}.png
-          aws s3 cp ${{ github.workspace }}/qr_${{ env.LOWER_CASE_VARIABLE }}.png s3://quivo-workstation-urlshortner.com/short/
-          
-
-      #Step 12: Using AWS SNS
-      - name: AWS SNS
-        if: ${{ github.event.inputs.OperatingSystem == 'Ubuntu-Outbound-Packing' }}
-        run: |
-          current_time=$(date)
-          # qr_url=$(aws s3 presign s3://quivo-workstation-scripts/qr_${{ env.LOWER_CASE_VARIABLE }}.png --expires-in 14400)
-          echo "1" | aws s3 cp - s3://quivo-workstation-urlshortner.com/short/qr_${{ env.LOWER_CASE_VARIABLE }} --content-type "text/plain"  --website-redirect "https://s3.eu-west-1.amazonaws.com/quivo-workstation-urlshortner.com/short/qr_${{ env.LOWER_CASE_VARIABLE }}.png" 
-          aws sns publish --topic-arn "arn:aws:sns:eu-west-1:482881817652:quivo-workstation-scripts-qrcodes" --message "${{ github.event.inputs.defaultInstanceName }} Qr_code link : https://d3nhwfsac3huwo.cloudfront.net/qr_${{ env.LOWER_CASE_VARIABLE }} , this link and qr code are valid for 3h, Created on $current_time"
+#====================================================================================================#
+#                                  PR Report Comment                                                 #  
+#====================================================================================================#   
+    - name: Comment PR actions message
+      uses: mshick/add-pr-comment@v2
+      if: failure()
+      with:
+        message-path: |
+          ${{ github.workspace }}/shellcheck_report.md
+        issue: ${{ github.event.pull_request.number }}
+        refresh-message-position: true
+        allow-repeats: false
+        message-success: ✅ Linted files successfully
