@@ -6,6 +6,7 @@ on:
       - 'main'
       - 'master'
     types: [ opened, synchronize ]
+      
 
 jobs:
   shellcheck:
@@ -16,19 +17,35 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0  # Fetch all history so all scripts are available
+        fetch-depth: 0  # Fetch all history so HEAD^ is available
 
-    - name: Find all shell scripts
+    - name: Find new or modified scripts
       id: find_scripts
       run: |
-        # List all .sh files in the repository
-        git ls-files | grep '\.sh$' > scripts-to-check.txt
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # Get the diff between the PR base and the current head
+          if git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} 2>/dev/null | grep '\.sh$' > scripts-to-check.txt; then
+            echo "Found modified scripts in pull request."
+          else
+            echo "Failed to find base SHA or no modified scripts found. Listing all scripts."
+            git ls-files | grep '\.sh$' > scripts-to-check.txt
+          fi
+        else
+          # For pushes, get the diff between HEAD and the previous commit
+          if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            git diff --name-only HEAD^ HEAD | grep '\.sh$' > scripts-to-check.txt
+          else
+            # If HEAD^ is not available (e.g., first commit), list all shell scripts
+            git ls-files | grep '\.sh$' > scripts-to-check.txt
+          fi
+        fi
 
         # Check if any scripts were found
         if [ ! -s scripts-to-check.txt ]; then
           echo "No shell scripts to check."
           exit 0
         fi
+
 
 #====================================================================================================#
 #                                           shellcheck                                               #  
@@ -79,4 +96,4 @@ jobs:
         issue: ${{ github.event.pull_request.number }}
         refresh-message-position: true
         allow-repeats: false
-        message-success: ✅ Linted files successfully
+        message-success: ✅ Linted files successfully  
